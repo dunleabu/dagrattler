@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from .core import Graph, node
-from .operators import batch_node, filter_node, map_node, recover_node, sink_node
+from .operators import batch_node, map_node, recover_node, sink_node
 from .result import Err
 
 

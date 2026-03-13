@@ -251,13 +251,13 @@ class Graph:
         if tasks:
             await asyncio.gather(*tasks)
 
+    async def run(self) -> None:
+        await self.start()
+        await self.wait()
+
     async def cancel(self) -> None:
         tasks = [node._task for node in self.nodes if node._task is not None]
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def run(self) -> None:
-        await self.start()
-        await self.wait()

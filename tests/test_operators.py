@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from streaming_framework import Graph
-from streaming_framework.operators import batch_node, filter_node, flat_map_node, map_node, recover_node, sink_node
+from dagrattler import Graph
+from dagrattler.operators import batch_node, filter_node, flat_map_node, map_node, recover_node, sink_node
 
 
 def test_map_node() -> None:

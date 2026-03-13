@@ -1,6 +1,6 @@
 import asyncio
 
-from streaming_framework import Err, Graph, Ok, TransformNode, node
+from dagrattler import Err, Graph, Ok, TransformNode, node
 
 
 async def collect_outputs(node: TransformNode) -> list[object]:

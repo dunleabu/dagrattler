@@ -1,4 +1,4 @@
-from streaming_framework import Err, Ok, ensure_exception
+from dagrattler import Err, Ok, ensure_exception
 
 
 def test_ok_err_basics() -> None:

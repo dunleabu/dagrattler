@@ -103,6 +103,7 @@ class TransformNode(BaseNode):
             await self._emit(Err(exc))
 
     async def run(self) -> None:
+        cancelled = False
         try:
             expected_ends = len(self.upstreams)
             while True:
@@ -122,8 +123,12 @@ class TransformNode(BaseNode):
                     await self._invoke(item.error)
                     continue
                 await self._invoke(item)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
-            await self._finish()
+            if not cancelled:
+                await self._finish()
 
 
 class Emitter:
@@ -156,14 +161,19 @@ class SourceNode(BaseNode):
 
     async def run(self) -> None:
         emitter = Emitter(self)
+        cancelled = False
         try:
             result = self.producer(emitter, *self.args, **self.kwargs)
             if inspect.isawaitable(result):
                 await result
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception as exc:
             await emitter.emit_err(exc)
         finally:
-            await self._finish()
+            if not cancelled:
+                await self._finish()
 
 
 class NodeSpec:

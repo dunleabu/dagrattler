@@ -36,6 +36,7 @@ class BatchNode(BaseNode):
             await self._emit(Ok(batch))
 
     async def run(self) -> None:
+        cancelled = False
         try:
             expected_ends = len(self.upstreams)
             while True:
@@ -55,8 +56,12 @@ class BatchNode(BaseNode):
                     self._buffer.append(item)
                 if len(self._buffer) >= self.size:
                     await self._flush()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
-            await self._finish()
+            if not cancelled:
+                await self._finish()
 
 
 def batch_node(size: int, *, name: str | None = None, queue_size: int = 100) -> BatchNode:
@@ -73,6 +78,7 @@ class RecoverNode(BaseNode):
         self.fn = fn
 
     async def run(self) -> None:
+        cancelled = False
         try:
             expected_ends = len(self.upstreams)
             while True:
@@ -94,8 +100,12 @@ class RecoverNode(BaseNode):
                         await self._emit(Err(exc))
                     continue
                 await self._emit(_normalize_result(item))
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
-            await self._finish()
+            if not cancelled:
+                await self._finish()
 
 
 def recover_node(fn: Any, *, name: str | None = None, queue_size: int = 100) -> RecoverNode:

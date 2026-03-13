@@ -8,6 +8,12 @@
 pip install "dagrattler @ git+https://github.com/dunleabu/dagrattler.git"
 ```
 
+For development dependencies:
+
+```bash
+uv sync --extra dev
+```
+
 ## Usage
 
 ```python

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-commit: uv is required to run ruff format" >&2
+    exit 1
+fi
+
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
+
+mapfile -d '' files < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.py')
+
+if [ "${#files[@]}" -eq 0 ]; then
+    exit 0
+fi
+
+uv run ruff format "${files[@]}"
+git add "${files[@]}"

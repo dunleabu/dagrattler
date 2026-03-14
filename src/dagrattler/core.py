@@ -4,7 +4,7 @@ import abc
 import asyncio
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterable
-from typing import Any
+from typing import Any, Callable, TypeVar, overload
 
 from .result import Err, Ok, ensure_exception
 
@@ -180,10 +180,13 @@ class SourceNode(BaseNode):
                 await self._finish()
 
 
+NodeFunc = TypeVar("NodeFunc", bound=Callable[..., Any])
+
+
 class NodeSpec:
     def __init__(
         self,
-        func: Any,
+        func: NodeFunc,
         *,
         handle_errors: bool = False,
         queue_size: int = 100,
@@ -207,13 +210,28 @@ class NodeSpec:
         )
 
 
+@overload
 def node(
-    func: Any | None = None,
+    func: NodeFunc, *, handle_errors: bool = False, queue_size: int = 100
+) -> NodeSpec: ...
+
+
+@overload
+def node(
+    func: None = None,
     *,
     handle_errors: bool = False,
     queue_size: int = 100,
-) -> NodeSpec | Any:
-    def decorator(inner: Any) -> NodeSpec:
+) -> Callable[[NodeFunc], NodeSpec]: ...
+
+
+def node(
+    func: NodeFunc | None = None,
+    *,
+    handle_errors: bool = False,
+    queue_size: int = 100,
+) -> NodeSpec | Callable[[NodeFunc], NodeSpec]:
+    def decorator(inner: NodeFunc) -> NodeSpec:
         return NodeSpec(inner, handle_errors=handle_errors, queue_size=queue_size)
 
     if func is None:

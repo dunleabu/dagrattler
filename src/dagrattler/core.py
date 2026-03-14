@@ -4,7 +4,7 @@ import abc
 import asyncio
 import inspect
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
-from typing import Concatenate, ParamSpec, TypeVar, cast, overload
+from typing import Concatenate, cast, overload
 
 from .result import Err, Ok, ensure_exception
 
@@ -14,11 +14,6 @@ class _EndSentinel:
 
 
 END = _EndSentinel()
-
-InT = TypeVar("InT")
-OutT = TypeVar("OutT")
-EmittedT = TypeVar("EmittedT")
-P = ParamSpec("P")
 
 type EmittedItem[T] = T | Ok[T] | Err
 type StreamResult[T] = (
@@ -148,14 +143,14 @@ class TransformNode[InT, OutT](BaseNode):
                 await self._finish()
 
 
-class Emitter[EmittedT]:
-    def __init__(self, node: SourceNode[EmittedT]) -> None:
+class Emitter[T]:
+    def __init__(self, node: SourceNode[T]) -> None:
         self._node = node
 
-    async def emit(self, item: EmittedItem[EmittedT]) -> None:
+    async def emit(self, item: EmittedItem[T]) -> None:
         await self._node._emit(_normalize_result(item))
 
-    async def emit_ok(self, value: EmittedT) -> None:
+    async def emit_ok(self, value: T) -> None:
         await self._node._emit(Ok(value))
 
     async def emit_err(self, error: BaseException) -> None:
@@ -229,7 +224,7 @@ class NodeSpec[InT, OutT, **P]:
 
 
 @overload
-def node(
+def node[InT, OutT, **P](
     func: Callable[Concatenate[InT, P], StreamResult[OutT]],
     *,
     handle_errors: bool = False,
@@ -248,7 +243,7 @@ def node[InT, OutT, **P](
 ]: ...
 
 
-def node(
+def node[InT, OutT, **P](
     func: Callable[Concatenate[InT, P], StreamResult[OutT]] | None = None,
     *,
     handle_errors: bool = False,

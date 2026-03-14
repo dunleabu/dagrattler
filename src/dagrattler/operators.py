@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import TypeVar, cast
+from typing import cast
 
 from .core import (
     BaseNode,
@@ -14,12 +14,8 @@ from .core import (
 )
 from .result import Err, Ok
 
-InT = TypeVar("InT")
-OutT = TypeVar("OutT")
-RecoveredT = TypeVar("RecoveredT")
 
-
-def map_node(
+def map_node[InT, OutT](
     fn: Callable[[InT], StreamResult[OutT]],
     *,
     name: str | None = None,
@@ -30,7 +26,7 @@ def map_node(
     )
 
 
-def filter_node(
+def filter_node[InT](
     predicate: Callable[[InT], bool],
     *,
     name: str | None = None,
@@ -46,7 +42,7 @@ def filter_node(
     )
 
 
-def flat_map_node(
+def flat_map_node[InT, OutT](
     fn: Callable[[InT], StreamResult[OutT]],
     *,
     name: str | None = None,
@@ -57,7 +53,7 @@ def flat_map_node(
     )
 
 
-class BatchNode[InT](BaseNode):
+class BatchNode[T](BaseNode):
     def __init__(
         self, size: int, *, name: str | None = None, queue_size: int = 100
     ) -> None:
@@ -65,7 +61,7 @@ class BatchNode[InT](BaseNode):
             raise ValueError("size must be > 0")
         super().__init__(name=name or "batch", queue_size=queue_size)
         self.size = size
-        self._buffer: list[InT] = []
+        self._buffer: list[T] = []
 
     async def _flush(self) -> None:
         if self._buffer:
@@ -89,9 +85,9 @@ class BatchNode[InT](BaseNode):
                     await self._emit(item)
                     continue
                 if isinstance(item, Ok):
-                    self._buffer.append(cast(InT, item.value))
+                    self._buffer.append(cast(T, item.value))
                 else:
-                    self._buffer.append(cast(InT, item))
+                    self._buffer.append(cast(T, item))
                 if len(self._buffer) >= self.size:
                     await self._flush()
         except asyncio.CancelledError:
@@ -102,13 +98,13 @@ class BatchNode[InT](BaseNode):
                 await self._finish()
 
 
-def batch_node(
+def batch_node[T](
     size: int, *, name: str | None = None, queue_size: int = 100
-) -> BatchNode[InT]:
+) -> BatchNode[T]:
     return BatchNode(size=size, name=name, queue_size=queue_size)
 
 
-def sink_node(
+def sink_node[InT, OutT](
     fn: Callable[[InT], StreamResult[OutT]],
     *,
     name: str | None = None,
@@ -163,7 +159,7 @@ class RecoverNode[InT, RecoveredT](BaseNode):
                 await self._finish()
 
 
-def recover_node(
+def recover_node[InT, RecoveredT](
     fn: Callable[[Exception], StreamResult[RecoveredT]],
     *,
     name: str | None = None,

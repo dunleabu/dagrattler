@@ -1,24 +1,42 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Callable
+from typing import TypeVar, cast
 
-from .core import BaseNode, END, TransformNode, _normalize_result, to_async_iter
+from .core import (
+    BaseNode,
+    END,
+    StreamResult,
+    TransformNode,
+    _normalize_result,
+    to_async_iter,
+)
 from .result import Err, Ok
+
+InT = TypeVar("InT")
+OutT = TypeVar("OutT")
+RecoveredT = TypeVar("RecoveredT")
 
 
 def map_node(
-    fn: Any, *, name: str | None = None, queue_size: int = 100
-) -> TransformNode:
+    fn: Callable[[InT], StreamResult[OutT]],
+    *,
+    name: str | None = None,
+    queue_size: int = 100,
+) -> TransformNode[InT, OutT]:
     return TransformNode(
         fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
     )
 
 
 def filter_node(
-    predicate: Any, *, name: str | None = None, queue_size: int = 100
-) -> TransformNode:
-    def _filter(value: Any) -> list[Any]:
+    predicate: Callable[[InT], bool],
+    *,
+    name: str | None = None,
+    queue_size: int = 100,
+) -> TransformNode[InT, InT]:
+    def _filter(value: InT) -> list[InT]:
         return [value] if predicate(value) else []
 
     return TransformNode(
@@ -29,14 +47,17 @@ def filter_node(
 
 
 def flat_map_node(
-    fn: Any, *, name: str | None = None, queue_size: int = 100
-) -> TransformNode:
+    fn: Callable[[InT], StreamResult[OutT]],
+    *,
+    name: str | None = None,
+    queue_size: int = 100,
+) -> TransformNode[InT, OutT]:
     return TransformNode(
         fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
     )
 
 
-class BatchNode(BaseNode):
+class BatchNode[InT](BaseNode):
     def __init__(
         self, size: int, *, name: str | None = None, queue_size: int = 100
     ) -> None:
@@ -44,7 +65,7 @@ class BatchNode(BaseNode):
             raise ValueError("size must be > 0")
         super().__init__(name=name or "batch", queue_size=queue_size)
         self.size = size
-        self._buffer: list[Any] = []
+        self._buffer: list[InT] = []
 
     async def _flush(self) -> None:
         if self._buffer:
@@ -68,9 +89,9 @@ class BatchNode(BaseNode):
                     await self._emit(item)
                     continue
                 if isinstance(item, Ok):
-                    self._buffer.append(item.value)
+                    self._buffer.append(cast(InT, item.value))
                 else:
-                    self._buffer.append(item)
+                    self._buffer.append(cast(InT, item))
                 if len(self._buffer) >= self.size:
                     await self._flush()
         except asyncio.CancelledError:
@@ -83,21 +104,28 @@ class BatchNode(BaseNode):
 
 def batch_node(
     size: int, *, name: str | None = None, queue_size: int = 100
-) -> BatchNode:
+) -> BatchNode[InT]:
     return BatchNode(size=size, name=name, queue_size=queue_size)
 
 
 def sink_node(
-    fn: Any, *, name: str | None = None, queue_size: int = 100
-) -> TransformNode:
+    fn: Callable[[InT], StreamResult[OutT]],
+    *,
+    name: str | None = None,
+    queue_size: int = 100,
+) -> TransformNode[InT, OutT]:
     return TransformNode(
         fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
     )
 
 
-class RecoverNode(BaseNode):
+class RecoverNode[InT, RecoveredT](BaseNode):
     def __init__(
-        self, fn: Any, *, name: str | None = None, queue_size: int = 100
+        self,
+        fn: Callable[[Exception], StreamResult[RecoveredT]],
+        *,
+        name: str | None = None,
+        queue_size: int = 100,
     ) -> None:
         super().__init__(
             name=name or getattr(fn, "__name__", None), queue_size=queue_size
@@ -126,7 +154,7 @@ class RecoverNode(BaseNode):
                     except Exception as exc:
                         await self._emit(Err(exc))
                     continue
-                await self._emit(_normalize_result(item))
+                await self._emit(_normalize_result(cast(InT, item)))
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -136,6 +164,9 @@ class RecoverNode(BaseNode):
 
 
 def recover_node(
-    fn: Any, *, name: str | None = None, queue_size: int = 100
-) -> RecoverNode:
+    fn: Callable[[Exception], StreamResult[RecoveredT]],
+    *,
+    name: str | None = None,
+    queue_size: int = 100,
+) -> RecoverNode[InT, RecoveredT]:
     return RecoverNode(fn, name=name, queue_size=queue_size)

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
-from .core import Graph, node
+from .core import Emitter, Graph, node
 from .operators import batch_node, map_node, recover_node, sink_node
 from .result import Err
 
@@ -19,7 +18,7 @@ def only_even(value: int) -> list[int]:
 
 
 @node(handle_errors=True)
-def log_errors(value: Any) -> Any:
+def log_errors(value: int | Exception) -> int | Err:
     if isinstance(value, Exception):
         print(f"log_errors: {value}")
         return Err(value)
@@ -33,7 +32,9 @@ def explode_on_seven(value: int) -> int:
     return value
 
 
-async def ticker(emitter: Any, *, count: int = 10, delay: float = 0.01) -> None:
+async def ticker(
+    emitter: Emitter[int], *, count: int = 10, delay: float = 0.01
+) -> None:
     for value in range(1, count + 1):
         await emitter.emit_ok(value)
         await asyncio.sleep(delay)

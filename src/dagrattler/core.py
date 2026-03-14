@@ -3,8 +3,8 @@ from __future__ import annotations
 import abc
 import asyncio
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Iterable
-from typing import Any, Callable, TypeVar, overload
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
+from typing import Concatenate, ParamSpec, TypeVar, cast, overload
 
 from .result import Err, Ok, ensure_exception
 
@@ -15,12 +15,27 @@ class _EndSentinel:
 
 END = _EndSentinel()
 
+InT = TypeVar("InT")
+OutT = TypeVar("OutT")
+EmittedT = TypeVar("EmittedT")
+P = ParamSpec("P")
 
-def _is_single_value(value: Any) -> bool:
+type EmittedItem[T] = T | Ok[T] | Err
+type StreamResult[T] = (
+    EmittedItem[T]
+    | Iterable[EmittedItem[T]]
+    | AsyncIterable[EmittedItem[T]]
+    | Awaitable[StreamResult[T] | None]
+    | None
+)
+type ProducerResult = Awaitable[None] | None
+
+
+def _is_single_value(value: object) -> bool:
     return isinstance(value, (str, bytes, Ok, Err))
 
 
-async def to_async_iter(value: Any) -> AsyncIterator[Any]:
+async def to_async_iter[T](value: StreamResult[T]) -> AsyncIterator[EmittedItem[T]]:
     if value is None:
         return
         yield
@@ -29,17 +44,17 @@ async def to_async_iter(value: Any) -> AsyncIterator[Any]:
             yield item
         return
     if hasattr(value, "__aiter__"):
-        async for item in value:
+        async for item in cast(AsyncIterable[EmittedItem[T]], value):
             yield item
         return
     if isinstance(value, Iterable) and not _is_single_value(value):
-        for item in value:
+        for item in cast(Iterable[EmittedItem[T]], value):
             yield item
         return
     yield value
 
 
-def _normalize_result(item: Any) -> Ok[Any] | Err:
+def _normalize_result[T](item: EmittedItem[T]) -> Ok[T] | Err:
     if isinstance(item, (Ok, Err)):
         return item
     return Ok(item)
@@ -48,7 +63,7 @@ def _normalize_result(item: Any) -> Ok[Any] | Err:
 class BaseNode(abc.ABC):
     def __init__(self, *, name: str | None = None, queue_size: int = 100) -> None:
         self.name = name or self.__class__.__name__
-        self.queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=queue_size)
+        self.queue: asyncio.Queue[object] = asyncio.Queue(maxsize=queue_size)
         self.upstreams: list[BaseNode] = []
         self.downstreams: list[BaseNode] = []
         self._task: asyncio.Task[None] | None = None
@@ -65,7 +80,7 @@ class BaseNode(abc.ABC):
             return others[0]
         return others
 
-    async def _emit(self, item: Any) -> None:
+    async def _emit(self, item: object) -> None:
         for downstream in self.downstreams:
             await downstream.queue.put(item)
 
@@ -78,15 +93,15 @@ class BaseNode(abc.ABC):
         raise NotImplementedError
 
 
-class TransformNode(BaseNode):
+class TransformNode[InT, OutT](BaseNode):
     def __init__(
         self,
-        func: Any,
-        *args: Any,
+        func: Callable[..., StreamResult[OutT]],
+        *args: object,
         name: str | None = None,
         queue_size: int = 100,
         handle_errors: bool = False,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> None:
         super().__init__(
             name=name or getattr(func, "__name__", None), queue_size=queue_size
@@ -96,7 +111,7 @@ class TransformNode(BaseNode):
         self.kwargs = kwargs
         self.handle_errors = handle_errors
 
-    async def _invoke(self, value: Any) -> None:
+    async def _invoke(self, value: InT) -> None:
         try:
             result = self.func(value, *self.args, **self.kwargs)
             async for output in to_async_iter(result):
@@ -133,28 +148,28 @@ class TransformNode(BaseNode):
                 await self._finish()
 
 
-class Emitter:
-    def __init__(self, node: SourceNode) -> None:
+class Emitter[EmittedT]:
+    def __init__(self, node: SourceNode[EmittedT]) -> None:
         self._node = node
 
-    async def emit(self, item: Any) -> None:
+    async def emit(self, item: EmittedItem[EmittedT]) -> None:
         await self._node._emit(_normalize_result(item))
 
-    async def emit_ok(self, value: Any) -> None:
+    async def emit_ok(self, value: EmittedT) -> None:
         await self._node._emit(Ok(value))
 
     async def emit_err(self, error: BaseException) -> None:
         await self._node._emit(Err(ensure_exception(error)))
 
 
-class SourceNode(BaseNode):
+class SourceNode[OutT](BaseNode):
     def __init__(
         self,
-        producer: Any,
-        *args: Any,
+        producer: Callable[..., ProducerResult],
+        *args: object,
         name: str | None = None,
         queue_size: int = 1,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> None:
         super().__init__(
             name=name or getattr(producer, "__name__", None), queue_size=queue_size
@@ -180,13 +195,10 @@ class SourceNode(BaseNode):
                 await self._finish()
 
 
-NodeFunc = TypeVar("NodeFunc", bound=Callable[..., Any])
-
-
-class NodeSpec:
+class NodeSpec[InT, OutT, **P]:
     def __init__(
         self,
-        func: NodeFunc,
+        func: Callable[Concatenate[InT, P], StreamResult[OutT]],
         *,
         handle_errors: bool = False,
         queue_size: int = 100,
@@ -196,42 +208,60 @@ class NodeSpec:
         self.queue_size = queue_size
         self.__name__ = getattr(func, "__name__", self.__class__.__name__)
 
-    def __call__(self, *args: Any, **kwargs: Any) -> TransformNode:
-        name = kwargs.pop("name", None)
-        queue_size = kwargs.pop("queue_size", self.queue_size)
-        handle_errors = kwargs.pop("handle_errors", self.handle_errors)
+    def __call__(
+        self,
+        *args: object,
+        name: str | None = None,
+        queue_size: int | None = None,
+        handle_errors: bool | None = None,
+        **kwargs: object,
+    ) -> TransformNode[InT, OutT]:
         return TransformNode(
             self.func,
             *args,
             name=name or self.__name__,
-            queue_size=queue_size,
-            handle_errors=handle_errors,
+            queue_size=queue_size if queue_size is not None else self.queue_size,
+            handle_errors=(
+                handle_errors if handle_errors is not None else self.handle_errors
+            ),
             **kwargs,
         )
 
 
 @overload
 def node(
-    func: NodeFunc, *, handle_errors: bool = False, queue_size: int = 100
-) -> NodeSpec: ...
+    func: Callable[Concatenate[InT, P], StreamResult[OutT]],
+    *,
+    handle_errors: bool = False,
+    queue_size: int = 100,
+) -> NodeSpec[InT, OutT, P]: ...
 
 
 @overload
-def node(
+def node[InT, OutT, **P](
     func: None = None,
     *,
     handle_errors: bool = False,
     queue_size: int = 100,
-) -> Callable[[NodeFunc], NodeSpec]: ...
+) -> Callable[
+    [Callable[Concatenate[InT, P], StreamResult[OutT]]], NodeSpec[InT, OutT, P]
+]: ...
 
 
 def node(
-    func: NodeFunc | None = None,
+    func: Callable[Concatenate[InT, P], StreamResult[OutT]] | None = None,
     *,
     handle_errors: bool = False,
     queue_size: int = 100,
-) -> NodeSpec | Callable[[NodeFunc], NodeSpec]:
-    def decorator(inner: NodeFunc) -> NodeSpec:
+) -> (
+    NodeSpec[InT, OutT, P]
+    | Callable[
+        [Callable[Concatenate[InT, P], StreamResult[OutT]]], NodeSpec[InT, OutT, P]
+    ]
+):
+    def decorator(
+        inner: Callable[Concatenate[InT, P], StreamResult[OutT]],
+    ) -> NodeSpec[InT, OutT, P]:
         return NodeSpec(inner, handle_errors=handle_errors, queue_size=queue_size)
 
     if func is None:
@@ -249,14 +279,14 @@ class Graph:
                 self.nodes.append(node)
         return self
 
-    def source(
+    def source[OutT](
         self,
-        producer: Any,
-        *args: Any,
+        producer: Callable[..., ProducerResult],
+        *args: object,
         name: str | None = None,
         queue_size: int = 1,
-        **kwargs: Any,
-    ) -> SourceNode:
+        **kwargs: object,
+    ) -> SourceNode[OutT]:
         node = SourceNode(producer, *args, name=name, queue_size=queue_size, **kwargs)
         self.add(node)
         return node

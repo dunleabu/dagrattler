@@ -2,34 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from .core import Emitter, Graph, node
-from .operators import batch_node, map_node, recover_node, sink_node
-from .result import Err
-
-
-@node
-def double(value: int) -> int:
-    return value * 2
-
-
-@node
-def only_even(value: int) -> list[int]:
-    return [value] if value % 2 == 0 else []
-
-
-@node(handle_errors=True)
-def log_errors(value: int | Exception) -> int | Err:
-    if isinstance(value, Exception):
-        print(f"log_errors: {value}")
-        return Err(value)
-    return value
-
-
-@node
-def explode_on_seven(value: int) -> int:
-    if value == 7:
-        raise ValueError("boom: seven")
-    return value
+from .core import Emitter, Graph
+from .operators import batch_node, filter_node, map_node, recover_node, sink_node
 
 
 async def ticker(
@@ -44,28 +18,20 @@ async def main() -> None:
     graph = Graph()
 
     source = graph.source(ticker, count=10, delay=0.0, name="ticker")
-
-    doubled = double(name="double")
-    evens = only_even(name="only_even")
+    doubled = map_node(lambda value: value * 2, name="double")
+    evens = filter_node(lambda value: value % 4 == 0, name="only_even")
     batches = batch_node(3, name="batch")
     batch_sums = map_node(sum, name="sum_batches")
-    risky = explode_on_seven(name="explode_on_seven")
-    logged = log_errors(name="log_errors")
     recovered = recover_node(lambda exc: [-1], name="recover")
     merged_sink = sink_node(lambda value: print(f"merged sink <- {value}"), name="sink")
 
-    graph.add(
-        doubled, evens, batches, batch_sums, risky, logged, recovered, merged_sink
-    )
+    graph.add(doubled, evens, batches, batch_sums, recovered, merged_sink)
 
-    source.connect(doubled, risky)
+    source.connect(doubled, recovered)
     doubled.connect(evens)
     evens.connect(batches)
     batches.connect(batch_sums)
     batch_sums.connect(merged_sink)
-
-    risky.connect(logged)
-    logged.connect(recovered)
     recovered.connect(merged_sink)
 
     await graph.run()

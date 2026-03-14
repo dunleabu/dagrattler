@@ -4,10 +4,10 @@ from .core import (
     Emitter,
     Graph,
     NodeSpec,
+    Result,
     SourceNode,
     TransformNode,
     node,
-    to_async_iter,
 )
 from .operators import (
     batch_node,
@@ -27,6 +27,7 @@ __all__ = [
     "Graph",
     "NodeSpec",
     "Ok",
+    "Result",
     "SourceNode",
     "TransformNode",
     "batch_node",
@@ -37,5 +38,4 @@ __all__ = [
     "node",
     "recover_node",
     "sink_node",
-    "to_async_iter",
 ]

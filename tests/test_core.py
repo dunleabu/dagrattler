@@ -1,6 +1,6 @@
 import asyncio
 
-from dagrattler import Err, Graph, Ok, TransformNode, node
+from dagrattler import Err, Graph, Ok, Result, TransformNode, node
 
 
 async def collect_outputs(node: TransformNode) -> list[object]:
@@ -14,8 +14,11 @@ async def collect_outputs(node: TransformNode) -> list[object]:
 
 
 def test_connect_builds_links_correctly() -> None:
-    left = TransformNode(lambda x: x, name="left")
-    right = TransformNode(lambda x: x, name="right")
+    async def identity(item):
+        return [item]
+
+    left = TransformNode(identity, name="left")
+    right = TransformNode(identity, name="right")
 
     returned = left.connect(right)
 
@@ -31,13 +34,23 @@ def test_simple_linear_pipeline() -> None:
         for value in [1, 2, 3]:
             await emitter.emit_ok(value)
 
+    async def inc(item: Result[int]) -> list[Result[int]]:
+        if isinstance(item, Err):
+            return [item]
+        return [Ok(item.value + 1)]
+
+    async def sink(item: Result[int]) -> list[Result[object]]:
+        if isinstance(item, Ok):
+            seen.append(item.value)
+        return []
+
     graph = Graph()
     source = graph.source(producer, name="source")
-    inc = TransformNode(lambda value: value + 1, name="inc")
-    sink = TransformNode(lambda value: seen.append(value), name="sink")
-    source.connect(inc)
-    inc.connect(sink)
-    graph.add(inc, sink)
+    inc_node = TransformNode(inc, name="inc")
+    sink_node = TransformNode(sink, name="sink")
+    source.connect(inc_node)
+    inc_node.connect(sink_node)
+    graph.add(inc_node, sink_node)
 
     asyncio.run(graph.run())
 
@@ -52,12 +65,22 @@ def test_fan_out() -> None:
         for value in [1, 2, 3]:
             await emitter.emit_ok(value)
 
+    async def left(item: Result[int]) -> list[Result[object]]:
+        if isinstance(item, Ok):
+            left_seen.append(item.value)
+        return []
+
+    async def right(item: Result[int]) -> list[Result[object]]:
+        if isinstance(item, Ok):
+            right_seen.append(item.value * 10)
+        return []
+
     graph = Graph()
     source = graph.source(producer)
-    left = TransformNode(lambda value: left_seen.append(value), name="left")
-    right = TransformNode(lambda value: right_seen.append(value * 10), name="right")
-    source.connect(left, right)
-    graph.add(left, right)
+    left_node = TransformNode(left, name="left")
+    right_node = TransformNode(right, name="right")
+    source.connect(left_node, right_node)
+    graph.add(left_node, right_node)
 
     asyncio.run(graph.run())
 
@@ -76,15 +99,23 @@ def test_merge_from_multiple_upstreams() -> None:
         await emitter.emit_ok(10)
         await emitter.emit_ok(20)
 
+    async def merge(item: Result[int]) -> list[Result[int]]:
+        return [item]
+
+    async def sink(item: Result[int]) -> list[Result[object]]:
+        if isinstance(item, Ok):
+            seen.append(item.value)
+        return []
+
     graph = Graph()
     source_a = graph.source(first, name="a")
     source_b = graph.source(second, name="b")
-    merge = TransformNode(lambda value: value, name="merge")
-    sink = TransformNode(lambda value: seen.append(value), name="sink")
-    source_a.connect(merge)
-    source_b.connect(merge)
-    merge.connect(sink)
-    graph.add(merge, sink)
+    merge_node = TransformNode(merge, name="merge")
+    sink_node = TransformNode(sink, name="sink")
+    source_a.connect(merge_node)
+    source_b.connect(merge_node)
+    merge_node.connect(sink_node)
+    graph.add(merge_node, sink_node)
 
     asyncio.run(graph.run())
 
@@ -101,15 +132,23 @@ def test_merge_waits_for_end_from_all_upstreams() -> None:
         await asyncio.sleep(0.01)
         await emitter.emit_ok("b1")
 
+    async def merge(item: Result[str]) -> list[Result[str]]:
+        return [item]
+
+    async def sink(item: Result[str]) -> list[Result[object]]:
+        if isinstance(item, Ok):
+            seen.append(item.value)
+        return []
+
     graph = Graph()
     source_a = graph.source(first, name="a")
     source_b = graph.source(second, name="b")
-    merge = TransformNode(lambda value: value, name="merge")
-    sink = TransformNode(lambda value: seen.append(value), name="sink")
-    source_a.connect(merge)
-    source_b.connect(merge)
-    merge.connect(sink)
-    graph.add(merge, sink)
+    merge_node = TransformNode(merge, name="merge")
+    sink_node = TransformNode(sink, name="sink")
+    source_a.connect(merge_node)
+    source_b.connect(merge_node)
+    merge_node.connect(sink_node)
+    graph.add(merge_node, sink_node)
 
     asyncio.run(graph.run())
 
@@ -117,36 +156,43 @@ def test_merge_waits_for_end_from_all_upstreams() -> None:
 
 
 def test_node_decorator_builds_transform_node() -> None:
-    @node(handle_errors=True, queue_size=50)
+    @node(queue_size=50)
     def sample(value: int, amount: int) -> int:
         return value + amount
 
-    instance = sample(3, name="custom", queue_size=7, handle_errors=False)
+    instance = sample(3, name="custom", queue_size=7)
 
     assert isinstance(instance, TransformNode)
     assert instance.name == "custom"
     assert instance.queue.maxsize == 7
-    assert instance.handle_errors is False
     assert sample.__name__ == "sample"
 
 
-def test_explicit_results_pass_through() -> None:
+def test_transform_node_can_emit_multiple_results() -> None:
     seen: list[object] = []
 
     async def producer(emitter) -> None:
         await emitter.emit_ok(1)
 
+    async def transform(item: Result[int]) -> list[Result[int]]:
+        if isinstance(item, Err):
+            return [item]
+        return [item, Err(ValueError("bad"))]
+
+    async def sink(item: Result[int]) -> list[Result[object]]:
+        if isinstance(item, Ok):
+            seen.append(item.value)
+        else:
+            seen.append(item.error)
+        return []
+
     graph = Graph()
     source = graph.source(producer)
-    transform = TransformNode(
-        lambda value: [Ok(value), Err(ValueError("bad"))], name="transform"
-    )
-    sink = TransformNode(
-        lambda value: seen.append(value), name="sink", handle_errors=True
-    )
-    source.connect(transform)
-    transform.connect(sink)
-    graph.add(transform, sink)
+    transform_node = TransformNode(transform, name="transform")
+    sink_node = TransformNode(sink, name="sink")
+    source.connect(transform_node)
+    transform_node.connect(sink_node)
+    graph.add(transform_node, sink_node)
 
     asyncio.run(graph.run())
 
@@ -154,19 +200,22 @@ def test_explicit_results_pass_through() -> None:
     assert isinstance(seen[1], ValueError)
 
 
-def test_source_exception_becomes_err_data() -> None:
+def test_source_exception_becomes_err_result() -> None:
     seen: list[object] = []
 
     async def producer(_emitter) -> None:
         raise RuntimeError("source failed")
 
+    async def sink(item: Result[object]) -> list[Result[object]]:
+        if isinstance(item, Err):
+            seen.append(item.error)
+        return []
+
     graph = Graph()
     source = graph.source(producer)
-    sink = TransformNode(
-        lambda value: seen.append(value), name="sink", handle_errors=True
-    )
-    source.connect(sink)
-    graph.add(sink)
+    sink_node = TransformNode(sink, name="sink")
+    source.connect(sink_node)
+    graph.add(sink_node)
 
     asyncio.run(graph.run())
 

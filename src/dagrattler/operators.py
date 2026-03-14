@@ -1,28 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import cast
 
-from .core import (
-    BaseNode,
-    END,
-    StreamResult,
-    TransformNode,
-    _normalize_result,
-    to_async_iter,
-)
+from .core import BaseNode, END, Result, TransformNode
 from .result import Err, Ok
 
 
 def map_node[InT, OutT](
-    fn: Callable[[InT], StreamResult[OutT]],
+    fn: Callable[[InT], OutT],
     *,
     name: str | None = None,
     queue_size: int = 100,
 ) -> TransformNode[InT, OutT]:
+    async def wrapped(item: Result[InT]) -> list[Result[OutT]]:
+        if isinstance(item, Err):
+            return [item]
+        return [Ok(fn(item.value))]
+
     return TransformNode(
-        fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
+        wrapped, name=name or getattr(fn, "__name__", None), queue_size=queue_size
     )
 
 
@@ -32,24 +30,31 @@ def filter_node[InT](
     name: str | None = None,
     queue_size: int = 100,
 ) -> TransformNode[InT, InT]:
-    def _filter(value: InT) -> list[InT]:
-        return [value] if predicate(value) else []
+    async def wrapped(item: Result[InT]) -> list[Result[InT]]:
+        if isinstance(item, Err):
+            return [item]
+        return [item] if predicate(item.value) else []
 
     return TransformNode(
-        _filter,
+        wrapped,
         name=name or getattr(predicate, "__name__", None),
         queue_size=queue_size,
     )
 
 
 def flat_map_node[InT, OutT](
-    fn: Callable[[InT], StreamResult[OutT]],
+    fn: Callable[[InT], Iterable[OutT]],
     *,
     name: str | None = None,
     queue_size: int = 100,
 ) -> TransformNode[InT, OutT]:
+    async def wrapped(item: Result[InT]) -> list[Result[OutT]]:
+        if isinstance(item, Err):
+            return [item]
+        return [Ok(value) for value in fn(item.value)]
+
     return TransformNode(
-        fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
+        wrapped, name=name or getattr(fn, "__name__", None), queue_size=queue_size
     )
 
 
@@ -81,13 +86,13 @@ class BatchNode[T](BaseNode):
                         await self._flush()
                         break
                     continue
-                if isinstance(item, Err):
-                    await self._emit(item)
+
+                event = cast(Result[T], item)
+                if isinstance(event, Err):
+                    await self._emit(event)
                     continue
-                if isinstance(item, Ok):
-                    self._buffer.append(cast(T, item.value))
-                else:
-                    self._buffer.append(cast(T, item))
+
+                self._buffer.append(event.value)
                 if len(self._buffer) >= self.size:
                     await self._flush()
         except asyncio.CancelledError:
@@ -104,21 +109,27 @@ def batch_node[T](
     return BatchNode(size=size, name=name, queue_size=queue_size)
 
 
-def sink_node[InT, OutT](
-    fn: Callable[[InT], StreamResult[OutT]],
+def sink_node[InT](
+    fn: Callable[[InT], object],
     *,
     name: str | None = None,
     queue_size: int = 100,
-) -> TransformNode[InT, OutT]:
+) -> TransformNode[InT, object]:
+    async def wrapped(item: Result[InT]) -> list[Result[object]]:
+        if isinstance(item, Err):
+            return [item]
+        fn(item.value)
+        return []
+
     return TransformNode(
-        fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
+        wrapped, name=name or getattr(fn, "__name__", None), queue_size=queue_size
     )
 
 
 class RecoverNode[InT, RecoveredT](BaseNode):
     def __init__(
         self,
-        fn: Callable[[Exception], StreamResult[RecoveredT]],
+        fn: Callable[[Exception], Iterable[RecoveredT]],
         *,
         name: str | None = None,
         queue_size: int = 100,
@@ -139,18 +150,19 @@ class RecoverNode[InT, RecoveredT](BaseNode):
                     if self._closed_upstreams >= expected_ends:
                         break
                     continue
-                if isinstance(item, Ok):
-                    await self._emit(item)
+
+                event = cast(Result[InT], item)
+                if isinstance(event, Ok):
+                    await self._emit(event)
                     continue
-                if isinstance(item, Err):
-                    try:
-                        result = self.fn(item.error)
-                        async for output in to_async_iter(result):
-                            await self._emit(_normalize_result(output))
-                    except Exception as exc:
-                        await self._emit(Err(exc))
-                    continue
-                await self._emit(_normalize_result(cast(InT, item)))
+
+                try:
+                    outputs = [Ok(output) for output in self.fn(event.error)]
+                except Exception as exc:
+                    outputs = [Err(exc)]
+
+                for output in outputs:
+                    await self._emit(output)
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -160,7 +172,7 @@ class RecoverNode[InT, RecoveredT](BaseNode):
 
 
 def recover_node[InT, RecoveredT](
-    fn: Callable[[Exception], StreamResult[RecoveredT]],
+    fn: Callable[[Exception], Iterable[RecoveredT]],
     *,
     name: str | None = None,
     queue_size: int = 100,

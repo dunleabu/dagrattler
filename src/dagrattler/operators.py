@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable
+import inspect
+from collections.abc import Awaitable, Callable, Iterable
 from typing import cast
 
 from .core import BaseNode, END, Result, TransformNode
@@ -9,7 +10,7 @@ from .result import Err, Ok
 
 
 def map_node[InT, OutT](
-    fn: Callable[[InT], OutT],
+    fn: Callable[[InT], OutT | Awaitable[OutT]],
     *,
     name: str | None = None,
     queue_size: int = 100,
@@ -17,7 +18,10 @@ def map_node[InT, OutT](
     async def wrapped(item: Result[InT]) -> list[Result[OutT]]:
         if isinstance(item, Err):
             return [item]
-        return [Ok(fn(item.value))]
+        result = fn(item.value)
+        if inspect.isawaitable(result):
+            result = await result
+        return [Ok(result)]
 
     return TransformNode(
         wrapped, name=name or getattr(fn, "__name__", None), queue_size=queue_size
@@ -25,7 +29,7 @@ def map_node[InT, OutT](
 
 
 def filter_node[InT](
-    predicate: Callable[[InT], bool],
+    predicate: Callable[[InT], bool | Awaitable[bool]],
     *,
     name: str | None = None,
     queue_size: int = 100,
@@ -33,7 +37,10 @@ def filter_node[InT](
     async def wrapped(item: Result[InT]) -> list[Result[InT]]:
         if isinstance(item, Err):
             return [item]
-        return [item] if predicate(item.value) else []
+        keep = predicate(item.value)
+        if inspect.isawaitable(keep):
+            keep = await keep
+        return [item] if keep else []
 
     return TransformNode(
         wrapped,
@@ -43,7 +50,7 @@ def filter_node[InT](
 
 
 def flat_map_node[InT, OutT](
-    fn: Callable[[InT], Iterable[OutT]],
+    fn: Callable[[InT], Iterable[OutT] | Awaitable[Iterable[OutT]]],
     *,
     name: str | None = None,
     queue_size: int = 100,
@@ -51,7 +58,10 @@ def flat_map_node[InT, OutT](
     async def wrapped(item: Result[InT]) -> list[Result[OutT]]:
         if isinstance(item, Err):
             return [item]
-        return [Ok(value) for value in fn(item.value)]
+        result = fn(item.value)
+        if inspect.isawaitable(result):
+            result = await result
+        return [Ok(value) for value in result]
 
     return TransformNode(
         wrapped, name=name or getattr(fn, "__name__", None), queue_size=queue_size
@@ -110,7 +120,7 @@ def batch_node[T](
 
 
 def sink_node[InT](
-    fn: Callable[[InT], object],
+    fn: Callable[[InT], object | Awaitable[object]],
     *,
     name: str | None = None,
     queue_size: int = 100,
@@ -118,7 +128,9 @@ def sink_node[InT](
     async def wrapped(item: Result[InT]) -> list[Result[object]]:
         if isinstance(item, Err):
             return [item]
-        fn(item.value)
+        result = fn(item.value)
+        if inspect.isawaitable(result):
+            await result
         return []
 
     return TransformNode(
@@ -129,7 +141,9 @@ def sink_node[InT](
 class RecoverNode[InT, RecoveredT](BaseNode):
     def __init__(
         self,
-        fn: Callable[[Exception], Iterable[RecoveredT]],
+        fn: Callable[
+            [Exception], Iterable[RecoveredT] | Awaitable[Iterable[RecoveredT]]
+        ],
         *,
         name: str | None = None,
         queue_size: int = 100,
@@ -157,7 +171,10 @@ class RecoverNode[InT, RecoveredT](BaseNode):
                     continue
 
                 try:
-                    outputs = [Ok(output) for output in self.fn(event.error)]
+                    result = self.fn(event.error)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    outputs = [Ok(output) for output in result]
                 except Exception as exc:
                     outputs = [Err(exc)]
 
@@ -172,7 +189,7 @@ class RecoverNode[InT, RecoveredT](BaseNode):
 
 
 def recover_node[InT, RecoveredT](
-    fn: Callable[[Exception], Iterable[RecoveredT]],
+    fn: Callable[[Exception], Iterable[RecoveredT] | Awaitable[Iterable[RecoveredT]]],
     *,
     name: str | None = None,
     queue_size: int = 100,

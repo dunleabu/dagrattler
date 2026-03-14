@@ -53,7 +53,9 @@ async def main() -> None:
     recovered = recover_node(lambda exc: [-1], name="recover")
     merged_sink = sink_node(lambda value: print(f"merged sink <- {value}"), name="sink")
 
-    graph.add(doubled, evens, batches, batch_sums, risky, logged, recovered, merged_sink)
+    graph.add(
+        doubled, evens, batches, batch_sums, risky, logged, recovered, merged_sink
+    )
 
     source.connect(doubled, risky)
     doubled.connect(evens)

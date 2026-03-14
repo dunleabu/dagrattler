@@ -88,7 +88,9 @@ class TransformNode(BaseNode):
         handle_errors: bool = False,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name=name or getattr(func, "__name__", None), queue_size=queue_size)
+        super().__init__(
+            name=name or getattr(func, "__name__", None), queue_size=queue_size
+        )
         self.func = func
         self.args = args
         self.kwargs = kwargs
@@ -154,7 +156,9 @@ class SourceNode(BaseNode):
         queue_size: int = 1,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name=name or getattr(producer, "__name__", None), queue_size=queue_size)
+        super().__init__(
+            name=name or getattr(producer, "__name__", None), queue_size=queue_size
+        )
         self.producer = producer
         self.args = args
         self.kwargs = kwargs

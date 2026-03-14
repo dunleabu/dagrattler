@@ -3,7 +3,14 @@ import asyncio
 import pytest
 
 from dagrattler import Graph
-from dagrattler.operators import batch_node, filter_node, flat_map_node, map_node, recover_node, sink_node
+from dagrattler.operators import (
+    batch_node,
+    filter_node,
+    flat_map_node,
+    map_node,
+    recover_node,
+    sink_node,
+)
 
 
 def test_map_node() -> None:

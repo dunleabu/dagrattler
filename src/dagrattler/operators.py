@@ -7,23 +7,39 @@ from .core import BaseNode, END, TransformNode, _normalize_result, to_async_iter
 from .result import Err, Ok
 
 
-def map_node(fn: Any, *, name: str | None = None, queue_size: int = 100) -> TransformNode:
-    return TransformNode(fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size)
+def map_node(
+    fn: Any, *, name: str | None = None, queue_size: int = 100
+) -> TransformNode:
+    return TransformNode(
+        fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
+    )
 
 
-def filter_node(predicate: Any, *, name: str | None = None, queue_size: int = 100) -> TransformNode:
+def filter_node(
+    predicate: Any, *, name: str | None = None, queue_size: int = 100
+) -> TransformNode:
     def _filter(value: Any) -> list[Any]:
         return [value] if predicate(value) else []
 
-    return TransformNode(_filter, name=name or getattr(predicate, "__name__", None), queue_size=queue_size)
+    return TransformNode(
+        _filter,
+        name=name or getattr(predicate, "__name__", None),
+        queue_size=queue_size,
+    )
 
 
-def flat_map_node(fn: Any, *, name: str | None = None, queue_size: int = 100) -> TransformNode:
-    return TransformNode(fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size)
+def flat_map_node(
+    fn: Any, *, name: str | None = None, queue_size: int = 100
+) -> TransformNode:
+    return TransformNode(
+        fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
+    )
 
 
 class BatchNode(BaseNode):
-    def __init__(self, size: int, *, name: str | None = None, queue_size: int = 100) -> None:
+    def __init__(
+        self, size: int, *, name: str | None = None, queue_size: int = 100
+    ) -> None:
         if size <= 0:
             raise ValueError("size must be > 0")
         super().__init__(name=name or "batch", queue_size=queue_size)
@@ -65,17 +81,27 @@ class BatchNode(BaseNode):
                 await self._finish()
 
 
-def batch_node(size: int, *, name: str | None = None, queue_size: int = 100) -> BatchNode:
+def batch_node(
+    size: int, *, name: str | None = None, queue_size: int = 100
+) -> BatchNode:
     return BatchNode(size=size, name=name, queue_size=queue_size)
 
 
-def sink_node(fn: Any, *, name: str | None = None, queue_size: int = 100) -> TransformNode:
-    return TransformNode(fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size)
+def sink_node(
+    fn: Any, *, name: str | None = None, queue_size: int = 100
+) -> TransformNode:
+    return TransformNode(
+        fn, name=name or getattr(fn, "__name__", None), queue_size=queue_size
+    )
 
 
 class RecoverNode(BaseNode):
-    def __init__(self, fn: Any, *, name: str | None = None, queue_size: int = 100) -> None:
-        super().__init__(name=name or getattr(fn, "__name__", None), queue_size=queue_size)
+    def __init__(
+        self, fn: Any, *, name: str | None = None, queue_size: int = 100
+    ) -> None:
+        super().__init__(
+            name=name or getattr(fn, "__name__", None), queue_size=queue_size
+        )
         self.fn = fn
 
     async def run(self) -> None:
@@ -109,5 +135,7 @@ class RecoverNode(BaseNode):
                 await self._finish()
 
 
-def recover_node(fn: Any, *, name: str | None = None, queue_size: int = 100) -> RecoverNode:
+def recover_node(
+    fn: Any, *, name: str | None = None, queue_size: int = 100
+) -> RecoverNode:
     return RecoverNode(fn, name=name, queue_size=queue_size)

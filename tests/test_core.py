@@ -138,8 +138,12 @@ def test_explicit_results_pass_through() -> None:
 
     graph = Graph()
     source = graph.source(producer)
-    transform = TransformNode(lambda value: [Ok(value), Err(ValueError("bad"))], name="transform")
-    sink = TransformNode(lambda value: seen.append(value), name="sink", handle_errors=True)
+    transform = TransformNode(
+        lambda value: [Ok(value), Err(ValueError("bad"))], name="transform"
+    )
+    sink = TransformNode(
+        lambda value: seen.append(value), name="sink", handle_errors=True
+    )
     source.connect(transform)
     transform.connect(sink)
     graph.add(transform, sink)
@@ -158,7 +162,9 @@ def test_source_exception_becomes_err_data() -> None:
 
     graph = Graph()
     source = graph.source(producer)
-    sink = TransformNode(lambda value: seen.append(value), name="sink", handle_errors=True)
+    sink = TransformNode(
+        lambda value: seen.append(value), name="sink", handle_errors=True
+    )
     source.connect(sink)
     graph.add(sink)
 
